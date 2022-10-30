@@ -270,7 +270,6 @@ float3 RemoveSRGBCurve_Fast( float3 x )
     return x < 0.04045 ? x / 12.92 : -7.43605 * x - 31.24297 * sqrt(-0.53792 * x + 1.279924) + 35.34864;
 }
 
-static const float3 ReferenceWhite = { 0.950489f, 1.000f, 1.088840f };
 static const float Pi = acos(-1);
 
 #define DegToRad(x) ((x)*Pi/180)
@@ -279,7 +278,7 @@ static const float Pi = acos(-1);
 #include "Include/TriDither.fxh"
 #include "Include/ColorSpaces.fxh"
 
-float4 PS_PostProcess(VS_OUTPUT_POST IN, float4 vpos : SV_POSITION) : SV_TARGET
+float4 PS_PostProcess(VS_OUTPUT_POST IN, float4 vpos : SV_POSITION, uniform uint colorspace) : SV_TARGET
 {
 	/// @brief Output color.
 	float4 res;
@@ -296,29 +295,83 @@ float4 PS_PostProcess(VS_OUTPUT_POST IN, float4 vpos : SV_POSITION) : SV_TARGET
 	// Apply color transforms.
 	if (ApplyColorTransforms)
 	{
-		/// @brief Oklab representation of color.
-		Lab labColor = RGBtoOklab(color.rgb);
+		switch (colorspace)
+		{
+		default:
+			Lab oklabColor = RGBtoOklab(color.rgb);
 
-		labColor.L *= LChLuminance * 0.01f; // Modify L*
-		labColor.a *= aMult * 0.01f; // Modify a*
-		labColor.b *= bMult * 0.01f; // Modify b*
+			oklabColor.L *= LChLuminance * 0.01f; // Modify L
+			oklabColor.a *= aMult * 0.01f; // Modify a
+			oklabColor.b *= bMult * 0.01f; // Modify b
 
-		/// @brief CIE-L*C*h*(ab) of color.
-		LCh lchColor = LabToLCh(labColor);
-		float offsetHue = lchColor.h + LChHue;
+			/// @brief CIE-L*C*h*(ab) of color.
+			LCh oklchColor = LabToLCh(oklabColor);
+			float okoffsetHue = oklchColor.h + LChHue;
 
-		lchColor.C *= LChSaturation * 0.01f; // Modify C* (saturation)
-		lchColor.h  = offsetHue >= 360 
-					? offsetHue - 360
-					: offsetHue;
+			oklchColor.C *= LChSaturation * 0.01f; // Modify C* (saturation)
+			oklchColor.h  = okoffsetHue >= 360 
+						? okoffsetHue - 360
+						: okoffsetHue;
 
-		color.rgb = OklabToRGB(LChToLab(lchColor)); // Convert CIE-L*C*h*(ab) to RGB
+			color.rgb = OklabToRGB(LChToLab(oklchColor)); // Convert CIE-L*C*h*(ab) to RGB
+
+			break;
+
+		case 1: // CIE-L*a*b*
+			/// @brief CIE-L*a*b* representation of color.
+			Lab labColor = RGBtoCIELab(color.rgb);
+
+			labColor.L *= LChLuminance * 0.01f; // Modify L*
+			labColor.a *= aMult * 0.01f; // Modify a*
+			labColor.b *= bMult * 0.01f; // Modify b*
+
+			/// @brief CIE-L*C*h*(ab) of color.
+			LCh lchColor = LabToLCh(labColor);
+			float offsetHue = lchColor.h + LChHue;
+
+			lchColor.C *= LChSaturation * 0.01f; // Modify C*
+			lchColor.h  = offsetHue >= 360
+						? offsetHue - 360
+						: offsetHue;
+
+			// Convert CIE-L*C*h*(ab) to RGB
+			color.rgb = CIELChabToRGB(lchColor);
+
+			break;
+		}
 	}
 
 	// Apply linear contrast.
 	if (ApplyLinearContrast)
 	{
-		color.rgb = lerp(LinearContrastPivot, color.rgb, LinearContrast * 0.01f);
+		switch (colorspace)
+		{
+		default:
+			Lab oklabPivot = RGBtoOklab(LinearContrastPivot);
+			Lab oklabColor = RGBtoOklab(color.rgb);
+
+			Lab oklabValue;
+			oklabValue.L = lerp(oklabPivot.L, oklabColor.L, LinearContrast * 0.01f);
+			oklabValue.a = lerp(oklabPivot.a, oklabColor.a, LinearContrast * 0.01f);
+			oklabValue.b = lerp(oklabPivot.b, oklabColor.b, LinearContrast * 0.01f);
+
+			color.rgb = OklabToRGB(oklabValue);
+
+			break;
+		
+		case 1:
+			Lab cielabPivot = RGBtoCIELab(LinearContrastPivot);
+			Lab cielabColor = RGBtoCIELab(color.rgb);
+
+			Lab cielabValue;
+			cielabValue.L = lerp(cielabPivot.L, cielabColor.L, LinearContrast * 0.01f);
+			cielabValue.a = lerp(cielabPivot.a, cielabColor.a, LinearContrast * 0.01f);
+			cielabValue.b = lerp(cielabPivot.b, cielabColor.b, LinearContrast * 0.01f);
+
+			color.rgb = CIELabToRGB(cielabValue);
+
+			break;
+		}
 	}	
 
 	// Apply sRGB gamma.
@@ -333,11 +386,20 @@ float4 PS_PostProcess(VS_OUTPUT_POST IN, float4 vpos : SV_POSITION) : SV_TARGET
 	return res;
 }
 
-technique11 PostProcess < string UIName = "ENBSeries"; >
+technique11 PostProcessOklab < string UIName = "Oklab"; >
 {
 	pass p0
 	{
 		SetVertexShader(CompileShader(vs_5_0, VS_PostProcess()));
-		SetPixelShader(CompileShader(ps_5_0, PS_PostProcess()));
+		SetPixelShader(CompileShader(ps_5_0, PS_PostProcess(0)));
+	}
+}
+
+technique11 PostProcessCIELab < string UIName = "CIE L*a*b*"; >
+{
+	pass p0
+	{
+		SetVertexShader(CompileShader(vs_5_0, VS_PostProcess()));
+		SetPixelShader(CompileShader(ps_5_0, PS_PostProcess(1)));
 	}
 }

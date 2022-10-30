@@ -69,6 +69,8 @@ float3 RGBtoXYZ(float3 inputRGB)
 	return mul(RGBtoXYZMatrix, inputRGB);
 }
 
+static const float3 ReferenceWhite = { 0.950489f, 1.000f, 1.088840f };
+
 /// @brief Convert CIE-XYZ to CIE-L*a*b*
 Lab XYZtoCIELab(float3 inputXYZ)
 {
@@ -140,6 +142,8 @@ float3 XYZtoRGB(float3 inputXYZ)
 	return mul(XYZtoRGBMatrix, inputXYZ);
 }
 
+/* Macros */
+
 /// @brief Macro to convert RGB to CIE-L*a*b*
 Lab RGBtoCIELab(float3 inputRGB)
 {
@@ -149,7 +153,7 @@ Lab RGBtoCIELab(float3 inputRGB)
 Lab RGBtoOklab(float3 inputRGB)
 {
 	float3 LMS = mul(RGBtoLMSMatrix, inputRGB);
-	LMS = pow(LMS, rcp(3));
+	LMS = pow(abs(LMS), rcp(3));
 	LMS = mul(LMStoOklabMatrix, LMS);
 
 	Lab retValue;
@@ -185,7 +189,7 @@ LCh RGBtoCIELChab(float3 inputRGB)
 	return LabToLCh(RGBtoCIELab(inputRGB));
 }
 
-/// @brief Macro to convert CIE-L*C*h*
+/// @brief Macro to convert CIE-L*C*h*(ab)
 float3 CIELChabToRGB(LCh inputLCh)
 {
 	return CIELabToRGB(LChToLab(inputLCh));
