@@ -319,6 +319,12 @@ int Kelvin <
 	int UIMin = 0;
 > = {6500};
 
+int HDRContrast <
+	string UIName = "HDR Contrast:";
+	string UIWidget = "Spinner";
+	int UIMin = 0;
+> = {100};
+
 /// @brief Bit of spacing.
 int Spacer3 <
 	string UIName = "   ";
@@ -352,6 +358,12 @@ static const float ShutterSpeedValues[13] =
     1.0f / 1.0f, 1.0f / 2.0f, 1.0f / 4.0f, 1.0f / 8.0f, 1.0f / 15.0f, 
 	1.0f / 30.0f, 1.0f / 60.0f, 1.0f / 125.0f, 1.0f / 250.0f, 1.0f / 500.0f, 
 	1.0f / 1000.0f, 1.0f / 2000.0f, 1.0f / 4000.0f
+};
+
+static const float ExposureValuePerTonemapper[2] =
+{
+	0.0f, // ARRI LogC4
+	1.22f, // Reinhard
 };
 
 /// @brief Scale factor used for storing physical light units in FP16 floats.
@@ -490,6 +502,8 @@ Texture2D LogC4ToSRGB <
 	string ResourceName = "Include/Textures/LUTs/logc4tosrgb.png"; 
 >;
 
+static const float3 LumaCoeffs = { 0.2126729, 0.7151522, 0.0721750 };
+
 float4 PS_Draw(VS_OUTPUT_POST IN, float4 v0 : SV_POSITION0, uniform uint toneMapper) : SV_TARGET
 {
 	// Output color.
@@ -520,7 +534,7 @@ float4 PS_Draw(VS_OUTPUT_POST IN, float4 v0 : SV_POSITION0, uniform uint toneMap
 	float exposure;
 
 	// Calculate EV offset.
-	float ExposureValue = DNI(EVDay, EVNight, EVInterior);
+	float ExposureValue = DNI(EVDay, EVNight, EVInterior) + ExposureValuePerTonemapper[toneMapper];
 
 	// Do PB-Exposure
 	color.rgb = CalcExposedColor(color.rgb, grayadaptation, ExposureValue, exposure);
@@ -528,15 +542,25 @@ float4 PS_Draw(VS_OUTPUT_POST IN, float4 v0 : SV_POSITION0, uniform uint toneMap
 	// Apply color temperature
 	color.rgb *= KelvinToRGB(Kelvin);
 
-	/* Primaries */
+	// Apply HDR contrast (log10). By svaryar.
+	color.rgb = pow(10, (log10(color) - 0.18f) * (HDRContrast * 0.01f) + 0.18f);
 
-	// Apply LogC4 to linear color.
-	color.rgb = LogC4(color.rgb);
+	switch (toneMapper)
+	{
+	default:
+		// Apply LogC4 to linear color.
+		color.rgb = LogC4(color.rgb);
 
-	/* Conversion */
+		// Convert LogC4 to sRGB
+		color.rgb = ApplyLUT(color.rgb, LogC4ToSRGB);
 
-	// Convert LogC4 to sRGB
-	color.rgb = ApplyLUT(color.rgb, LogC4ToSRGB);
+		break;
+
+	case 1:
+		color.rgb /= (1.0f + color.rgb);
+
+		break;
+	}
 
 	// Apply sRGB curve.
 	color.rgb = RemoveSRGBCurve_Fast(color.rgb);
@@ -622,7 +646,7 @@ technique11 arriLogC4 <string UIName="ARRI LogC4";>
 	}
 }
 
-technique11 reinhard <string UIName = "Reinhard";>
+technique11 reinhardSimple <string UIName = "Reinhard";>
 {
 	pass p0
 	{
